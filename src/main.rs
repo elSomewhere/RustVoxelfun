@@ -27,7 +27,7 @@ use bytemuck::{Pod, Zeroable};
 mod cube_mesh;
 mod setup;
 mod terrain;
-use terrain::TerrainChunk;
+use terrain::{TerrainState, update_terrain};
 use bevy_flycam::prelude::*;
 
 fn main() {
@@ -38,7 +38,10 @@ fn main() {
             setup::SetupPlugin,
             CustomMaterialPlugin,
         ))
+        .init_resource::<TerrainState>()
         .add_systems(Startup, setup_terrain)
+        .add_systems(Startup, setup_lighting)
+        .add_systems(Update, update_terrain)
         .run();
 }
 
@@ -83,6 +86,8 @@ struct InstanceData {
     position: Vec3,
     scale: f32,
     color: [f32; 4],
+    normal: [f32; 3],
+    _padding: f32, // To ensure 16-byte alignment
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -192,12 +197,17 @@ impl SpecializedMeshPipeline for CustomPipeline {
                 VertexAttribute {
                     format: VertexFormat::Float32x4,
                     offset: 0,
-                    shader_location: 3, // shader locations 0-2 are taken up by Position, Normal and UV attributes
+                    shader_location: 3,
                 },
                 VertexAttribute {
                     format: VertexFormat::Float32x4,
                     offset: VertexFormat::Float32x4.size(),
                     shader_location: 4,
+                },
+                VertexAttribute {
+                    format: VertexFormat::Float32x4,
+                    offset: VertexFormat::Float32x4.size() * 2,
+                    shader_location: 5,
                 },
             ],
         });
@@ -261,9 +271,31 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMeshInstanced {
 
 fn setup_terrain(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut terrain_state: ResMut<TerrainState>,
 ) {
-    let terrain = TerrainChunk::new(50, 20, 50); // Example dimensions
-    terrain.generate_terrain(&mut commands, materials, meshes);
+    // Initialize the terrain state
+    *terrain_state = TerrainState::default();
+}
+
+fn setup_lighting(mut commands: Commands) {
+    // Add a directional light
+    commands.spawn(DirectionalLightBundle {
+        directional_light: DirectionalLight {
+            illuminance: 10000.0,
+            shadows_enabled: true,
+            ..default()
+        },
+        transform: Transform {
+            translation: Vec3::new(0.0, 100.0, 0.0),
+            rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4),
+            ..default()
+        },
+        ..default()
+    });
+
+    // Add an ambient light
+    commands.insert_resource(AmbientLight {
+        color: Color::WHITE,
+        brightness: 0.2,
+    });
 }
