@@ -3,10 +3,10 @@ use bevy::prelude::*;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::window::PrimaryWindow;
 use bevy_flycam::FlyCam;
-use crate::chunk::{Chunk, VOXEL_SIZE, TerrainState, CHUNK_SIZE};
-use crate::terrain::Terrain;
+use crate::chunk::{Chunk, VOXEL_SIZE, CHUNK_SIZE};
 
 use bevy::window::Window;
+use crate::terrain::TerrainState;
 
 pub(crate) fn handle_mouse_input(
     mouse_button_input: Res<ButtonInput<MouseButton>>,

@@ -26,16 +26,15 @@ use bytemuck::{Pod, Zeroable};
 
 mod cube_mesh;
 mod terrain;
-use chunk::{update_terrain};
-use terrain::Terrain;
 
 
 mod chunk;
 mod interaction;
 
 use bevy_flycam::prelude::*;
-use crate::chunk::{mark_chunks_for_update, TerrainState, update_marked_chunks};
+use crate::chunk::{mark_chunks_for_update, update_marked_chunks};
 use crate::interaction::handle_mouse_input;
+use crate::terrain::TerrainState;
 
 fn main() {
     App::new()
@@ -44,9 +43,7 @@ fn main() {
         .add_plugins((
             CustomMaterialPlugin,
         ))
-        .init_resource::<Terrain>()
         .insert_resource(TerrainState::default()) // Add this line
-        .add_systems(Startup, setup_terrain)
         .add_systems(Startup, setup_lighting)
         .add_systems(Update, mark_chunks_for_update)
         .add_systems(Update, update_marked_chunks)
@@ -278,13 +275,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMeshInstanced {
     }
 }
 
-fn setup_terrain(
-    mut commands: Commands,
-    mut terrain_state: ResMut<Terrain>,
-) {
-    // Initialize the Terrain state
-    *terrain_state = Terrain::default();
-}
+
 
 fn setup_lighting(mut commands: Commands) {
     // Add a directional light

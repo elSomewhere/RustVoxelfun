@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 use bevy::render::view::NoFrustumCulling;
 use noise::{NoiseFn, Perlin};
-use crate::terrain::Terrain;
 
 use crate::cube_mesh::create_cube_mesh;
 use crate::{InstanceData, InstanceMaterialData};
 use std::collections::{HashMap, HashSet};
 use bevy_flycam::FlyCam;
+use crate::terrain::TerrainState;
 
 pub const CHUNK_SIZE: i32 = 16;
 pub const RENDER_DISTANCE: i32 = 3;
@@ -197,90 +197,8 @@ impl Chunk {
 }
 
 
-pub fn update_terrain(
-    mut commands: Commands,
-    mut terrain_state: ResMut<Terrain>,
-    query: Query<&Transform, With<FlyCam>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    chunk_query: Query<(Entity, &Chunk)>,
-    mut instance_query: Query<&mut InstanceMaterialData>,
-) {
-    let player_position = query.single().translation;
-    let chunk_position = IVec3::new(
-        (player_position.x / (CHUNK_SIZE as f32 * VOXEL_SIZE)).floor() as i32,
-        0,
-        (player_position.z / (CHUNK_SIZE as f32 * VOXEL_SIZE)).floor() as i32,
-    );
-
-    // Spawn new chunks
-    for x in -RENDER_DISTANCE..=RENDER_DISTANCE {
-        for z in -RENDER_DISTANCE..=RENDER_DISTANCE {
-            let current_chunk_position = chunk_position + IVec3::new(x, 0, z);
-            if !terrain_state.chunks.contains_key(&current_chunk_position) {
-                let chunk = Chunk::new(
-                    current_chunk_position,
-                    CHUNK_SIZE as u32,
-                    TERRAIN_HEIGHT,
-                    CHUNK_SIZE as u32,
-                );
-                let chunk_entity = commands.spawn((
-                    chunk,
-                    meshes.add(create_cube_mesh()),
-                    SpatialBundle::INHERITED_IDENTITY,
-                    InstanceMaterialData(Vec::new()),
-                    NoFrustumCulling,
-                )).id();
-                terrain_state.chunks.insert(current_chunk_position, chunk_entity);
-            }
-        }
-    }
-
-    // Remove chunks that are too far away
-    terrain_state.chunks.retain(|&pos, &mut entity| {
-        if (pos - chunk_position).abs().max_element() > RENDER_DISTANCE {
-            commands.entity(entity).despawn();
-            false
-        } else {
-            true
-        }
-    });
-
-    // Update instance data for all chunks
-    for (&chunk_pos, &entity) in terrain_state.chunks.iter() {
-        if let Ok((_, chunk)) = chunk_query.get(entity) {
-            let mut neighbors = [None; 6];
-            let neighbor_positions = [
-                IVec3::new(-1, 0, 0),
-                IVec3::new(1, 0, 0),
-                IVec3::new(0, -1, 0),
-                IVec3::new(0, 1, 0),
-                IVec3::new(0, 0, -1),
-                IVec3::new(0, 0, 1),
-            ];
-
-            for (i, offset) in neighbor_positions.iter().enumerate() {
-                if let Some(&neighbor_entity) = terrain_state.chunks.get(&(chunk_pos + *offset)) {
-                    if let Ok((_, neighbor_chunk)) = chunk_query.get(neighbor_entity) {
-                        neighbors[i] = Some(neighbor_chunk);
-                    }
-                }
-            }
-
-            if let Ok(mut instance_material_data) = instance_query.get_mut(entity) {
-                let new_instance_data = chunk.create_instance_data(&neighbors);
-                instance_material_data.0 = new_instance_data;
-            }
-        }
-    }
-}
 
 
-#[derive(Resource, Default)]
-pub struct TerrainState {
-    pub chunks: HashMap<IVec3, Entity>,
-    pub chunks_to_update: HashSet<IVec3>,
-    pub chunks_to_remove: HashSet<IVec3>,
-}
 #[derive(Component)]
 pub struct ChunkNeedsUpdate;
 
