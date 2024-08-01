@@ -47,6 +47,20 @@ impl Chunk {
         }
     }
 
+    pub fn set_voxel(&mut self, x: i32, y: i32, z: i32, is_solid: bool) {
+        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
+            let index = (x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize;
+            self.voxels[index] = is_solid;
+        }
+    }
+
+    pub fn remove_voxel(&mut self, x: i32, y: i32, z: i32) {
+        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
+            let index = (x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize;
+            self.voxels[index] = false;
+        }
+    }
+
     fn calculate_normal(&self, x: u32, y: u32, z: u32, neighbors: &[Option<&Chunk>; 6]) -> [f32; 3] {
         let mut normal = [0.0, 0.0, 0.0];
         let directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)];
@@ -111,9 +125,46 @@ impl Chunk {
         false
     }
 
-    fn is_voxel_solid(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
+    pub(crate) fn is_voxel_solid(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
         if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
             return self.voxels[(x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize];
+        }
+
+        let (chunk_x, chunk_y, chunk_z) = (
+            if x < 0 { -1 } else if x >= CHUNK_SIZE { 1 } else { 0 },
+            if y < 0 { -1 } else if y >= self.height as i32 { 1 } else { 0 },
+            if z < 0 { -1 } else if z >= CHUNK_SIZE { 1 } else { 0 },
+        );
+
+        let neighbor_index = match (chunk_x, chunk_y, chunk_z) {
+            (-1, 0, 0) => 0,
+            (1, 0, 0) => 1,
+            (0, -1, 0) => 2,
+            (0, 1, 0) => 3,
+            (0, 0, -1) => 4,
+            (0, 0, 1) => 5,
+            _ => return false, // Corner or edge case, treat as air
+        };
+
+        if let Some(neighbor) = &neighbors[neighbor_index] {
+            let (nx, ny, nz) = (
+                (x + CHUNK_SIZE) % CHUNK_SIZE,
+                y.rem_euclid(self.height as i32),
+                (z + CHUNK_SIZE) % CHUNK_SIZE,
+            );
+            neighbor.voxels[(nx + ny * CHUNK_SIZE + nz * CHUNK_SIZE * neighbor.height as i32) as usize]
+        } else {
+            false // If there's no neighbor chunk, treat it as air
+        }
+    }
+
+
+    pub(crate) fn is_voxel_solid_raycast(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
+        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
+            let index = (x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize;
+            let is_solid = self.voxels[index];
+            info!("Checking voxel at local position ({}, {}, {}): {}", x, y, z, is_solid);
+            return is_solid;
         }
 
         let (chunk_x, chunk_y, chunk_z) = (
