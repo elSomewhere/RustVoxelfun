@@ -33,6 +33,7 @@ use terrain::Terrain;
 mod chunk;
 
 use bevy_flycam::prelude::*;
+use crate::chunk::{mark_chunks_for_update, TerrainState, update_marked_chunks};
 
 fn main() {
     App::new()
@@ -42,9 +43,11 @@ fn main() {
             CustomMaterialPlugin,
         ))
         .init_resource::<Terrain>()
+        .insert_resource(TerrainState::default()) // Add this line
         .add_systems(Startup, setup_terrain)
         .add_systems(Startup, setup_lighting)
-        .add_systems(Update, update_terrain)
+        .add_systems(Update, mark_chunks_for_update)
+        .add_systems(Update, update_marked_chunks)
         .run();
 }
 

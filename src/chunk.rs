@@ -5,7 +5,7 @@ use crate::terrain::Terrain;
 
 use crate::cube_mesh::create_cube_mesh;
 use crate::{InstanceData, InstanceMaterialData};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use bevy_flycam::FlyCam;
 
 pub const CHUNK_SIZE: i32 = 16;
@@ -145,10 +145,6 @@ impl Chunk {
     }
 }
 
-#[derive(Resource, Default)]
-pub struct TerrainState {
-    pub chunks: HashMap<IVec3, Entity>,
-}
 
 pub fn update_terrain(
     mut commands: Commands,
@@ -225,4 +221,118 @@ pub fn update_terrain(
             }
         }
     }
+}
+
+
+#[derive(Resource, Default)]
+pub struct TerrainState {
+    pub chunks: HashMap<IVec3, Entity>,
+    pub chunks_to_update: HashSet<IVec3>,
+    pub chunks_to_remove: HashSet<IVec3>,
+}
+#[derive(Component)]
+pub struct ChunkNeedsUpdate;
+
+pub fn mark_chunks_for_update(
+    mut terrain_state: ResMut<TerrainState>,
+    query: Query<&Transform, With<FlyCam>>,
+) {
+    let player_position = query.single().translation;
+    let chunk_position = IVec3::new(
+        (player_position.x / (CHUNK_SIZE as f32 * VOXEL_SIZE)).floor() as i32,
+        0,
+        (player_position.z / (CHUNK_SIZE as f32 * VOXEL_SIZE)).floor() as i32,
+    );
+
+    // Clear the previous update and remove sets
+    terrain_state.chunks_to_update.clear();
+    terrain_state.chunks_to_remove.clear();
+
+    // Mark chunks for spawning or updating
+    for x in -RENDER_DISTANCE..=RENDER_DISTANCE {
+        for z in -RENDER_DISTANCE..=RENDER_DISTANCE {
+            let current_chunk_position = chunk_position + IVec3::new(x, 0, z);
+            terrain_state.chunks_to_update.insert(current_chunk_position);
+        }
+    }
+
+    // Collect positions to remove
+    let positions_to_remove: Vec<IVec3> = terrain_state.chunks.keys()
+        .filter(|&&pos| (pos - chunk_position).abs().max_element() > RENDER_DISTANCE)
+        .cloned()
+        .collect();
+
+    // Mark chunks for removal
+    for pos in positions_to_remove {
+        terrain_state.chunks_to_remove.insert(pos);
+    }
+}
+
+pub fn update_marked_chunks(
+    mut commands: Commands,
+    mut terrain_state: ResMut<TerrainState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    chunk_query: Query<(Entity, &Chunk)>,
+    mut instance_query: Query<&mut InstanceMaterialData>,
+) {
+    let chunks_to_update = terrain_state.chunks_to_update.clone();
+    let chunks_to_remove = terrain_state.chunks_to_remove.clone();
+
+    // Handle chunk updates and creation
+    for &chunk_pos in &chunks_to_update {
+        if let Some(&entity) = terrain_state.chunks.get(&chunk_pos) {
+            // Update existing chunk
+            if let Ok((_, chunk)) = chunk_query.get(entity) {
+                let neighbor_entities = get_chunk_neighbors(&terrain_state.chunks, chunk_pos);
+                let neighbors: [Option<&Chunk>; 6] = neighbor_entities.map(|entity| {
+                    entity.and_then(|e| chunk_query.get(e).ok().map(|(_, chunk)| chunk))
+                });
+
+                if let Ok(mut instance_material_data) = instance_query.get_mut(entity) {
+                    let new_instance_data = chunk.create_instance_data(&neighbors);
+                    instance_material_data.0 = new_instance_data;
+                }
+            }
+        } else {
+            // Spawn new chunk
+            let chunk = Chunk::new(
+                chunk_pos,
+                CHUNK_SIZE as u32,
+                TERRAIN_HEIGHT,
+                CHUNK_SIZE as u32,
+            );
+            let chunk_entity = commands.spawn((
+                chunk,
+                meshes.add(create_cube_mesh()),
+                SpatialBundle::INHERITED_IDENTITY,
+                InstanceMaterialData(Vec::new()),
+                NoFrustumCulling,
+            )).id();
+            terrain_state.chunks.insert(chunk_pos, chunk_entity);
+        }
+    }
+
+    // Handle chunk removal
+    for &chunk_pos in &chunks_to_remove {
+        if let Some(entity) = terrain_state.chunks.remove(&chunk_pos) {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Clear the update and remove sets
+    terrain_state.chunks_to_update.clear();
+    terrain_state.chunks_to_remove.clear();
+}
+
+fn get_chunk_neighbors(chunks: &HashMap<IVec3, Entity>, chunk_pos: IVec3) -> [Option<Entity>; 6] {
+    let neighbor_positions = [
+        IVec3::new(-1, 0, 0),
+        IVec3::new(1, 0, 0),
+        IVec3::new(0, -1, 0),
+        IVec3::new(0, 1, 0),
+        IVec3::new(0, 0, -1),
+        IVec3::new(0, 0, 1),
+    ];
+
+    neighbor_positions.map(|offset| chunks.get(&(chunk_pos + offset)).copied())
 }
