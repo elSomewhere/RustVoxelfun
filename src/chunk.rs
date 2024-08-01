@@ -47,30 +47,22 @@ impl Chunk {
         }
     }
 
-    fn calculate_normal(&self, x: u32, y: u32, z: u32) -> [f32; 3] {
+    fn calculate_normal(&self, x: u32, y: u32, z: u32, neighbors: &[Option<&Chunk>; 6]) -> [f32; 3] {
         let mut normal = [0.0, 0.0, 0.0];
-        if x > 0 && !self.voxels[((x-1) + y * self.width + z * self.width * self.height) as usize] {
-            normal[0] -= 1.0;
+        let directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)];
+
+        for (i, (dx, dy, dz)) in directions.iter().enumerate() {
+            let (nx, ny, nz) = (x as i32 + dx, y as i32 + dy, z as i32 + dz);
+
+            if !self.is_voxel_solid(nx, ny, nz, neighbors) {
+                normal[i / 2] += *dx as f32 + *dy as f32 + *dz as f32;
+            }
         }
-        if x < self.width - 1 && !self.voxels[((x+1) + y * self.width + z * self.width * self.height) as usize] {
-            normal[0] += 1.0;
-        }
-        if y > 0 && !self.voxels[(x + (y-1) * self.width + z * self.width * self.height) as usize] {
-            normal[1] -= 1.0;
-        }
-        if y < self.height - 1 && !self.voxels[(x + (y+1) * self.width + z * self.width * self.height) as usize] {
-            normal[1] += 1.0;
-        }
-        if z > 0 && !self.voxels[(x + y * self.width + (z-1) * self.width * self.height) as usize] {
-            normal[2] -= 1.0;
-        }
-        if z < self.depth - 1 && !self.voxels[(x + y * self.width + (z+1) * self.width * self.height) as usize] {
-            normal[2] += 1.0;
-        }
+
         normal
     }
 
-    pub fn create_instance_data(&self) -> Vec<InstanceData> {
+    pub fn create_instance_data(&self, neighbors: &[Option<&Chunk>; 6]) -> Vec<InstanceData> {
         let mut instances = Vec::new();
 
         for x in 0..self.width {
@@ -81,9 +73,8 @@ impl Chunk {
                         let world_y = self.position.y * CHUNK_SIZE as i32 + y as i32;
                         let world_z = self.position.z * CHUNK_SIZE as i32 + z as i32;
 
-                        // Add all voxels that are not completely surrounded
-                        if self.is_visible(x, y, z) {
-                            let normal = self.calculate_normal(x, y, z);
+                        if self.is_voxel_visible(x as i32, y as i32, z as i32, neighbors) {
+                            let normal = self.calculate_normal(x, y, z, neighbors);
                             let height_ratio = y as f32 / TERRAIN_HEIGHT as f32;
                             let color = [
                                 0.2 + height_ratio * 0.3,
@@ -107,20 +98,50 @@ impl Chunk {
         instances
     }
 
-    fn is_visible(&self, x: u32, y: u32, z: u32) -> bool {
-        let neighbors = [
-            (x.wrapping_sub(1), y, z),
-            (x.wrapping_add(1), y, z),
-            (x, y.wrapping_sub(1), z),
-            (x, y.wrapping_add(1), z),
-            (x, y, z.wrapping_sub(1)),
-            (x, y, z.wrapping_add(1)),
-        ];
+    fn is_voxel_visible(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
+        let directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)];
 
-        neighbors.iter().any(|&(nx, ny, nz)| {
-            nx >= self.width || ny >= self.height || nz >= self.depth ||
-                !self.voxels[(nx + ny * self.width + nz * self.width * self.height) as usize]
-        })
+        for (dx, dy, dz) in directions.iter() {
+            let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+            if !self.is_voxel_solid(nx, ny, nz, neighbors) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn is_voxel_solid(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
+        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
+            return self.voxels[(x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize];
+        }
+
+        let (chunk_x, chunk_y, chunk_z) = (
+            if x < 0 { -1 } else if x >= CHUNK_SIZE { 1 } else { 0 },
+            if y < 0 { -1 } else if y >= self.height as i32 { 1 } else { 0 },
+            if z < 0 { -1 } else if z >= CHUNK_SIZE { 1 } else { 0 },
+        );
+
+        let neighbor_index = match (chunk_x, chunk_y, chunk_z) {
+            (-1, 0, 0) => 0,
+            (1, 0, 0) => 1,
+            (0, -1, 0) => 2,
+            (0, 1, 0) => 3,
+            (0, 0, -1) => 4,
+            (0, 0, 1) => 5,
+            _ => return false, // Corner or edge case, treat as air
+        };
+
+        if let Some(neighbor) = &neighbors[neighbor_index] {
+            let (nx, ny, nz) = (
+                (x + CHUNK_SIZE) % CHUNK_SIZE,
+                y.rem_euclid(self.height as i32),
+                (z + CHUNK_SIZE) % CHUNK_SIZE,
+            );
+            neighbor.voxels[(nx + ny * CHUNK_SIZE + nz * CHUNK_SIZE * neighbor.height as i32) as usize]
+        } else {
+            false // If there's no neighbor chunk, treat it as air
+        }
     }
 }
 
@@ -134,6 +155,8 @@ pub fn update_terrain(
     mut terrain_state: ResMut<Terrain>,
     query: Query<&Transform, With<FlyCam>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    chunk_query: Query<(Entity, &Chunk)>,
+    mut instance_query: Query<&mut InstanceMaterialData>,
 ) {
     let player_position = query.single().translation;
     let chunk_position = IVec3::new(
@@ -142,6 +165,7 @@ pub fn update_terrain(
         (player_position.z / (CHUNK_SIZE as f32 * VOXEL_SIZE)).floor() as i32,
     );
 
+    // Spawn new chunks
     for x in -RENDER_DISTANCE..=RENDER_DISTANCE {
         for z in -RENDER_DISTANCE..=RENDER_DISTANCE {
             let current_chunk_position = chunk_position + IVec3::new(x, 0, z);
@@ -152,11 +176,11 @@ pub fn update_terrain(
                     TERRAIN_HEIGHT,
                     CHUNK_SIZE as u32,
                 );
-                let instance_data = chunk.create_instance_data();
                 let chunk_entity = commands.spawn((
+                    chunk,
                     meshes.add(create_cube_mesh()),
                     SpatialBundle::INHERITED_IDENTITY,
-                    InstanceMaterialData(instance_data),
+                    InstanceMaterialData(Vec::new()),
                     NoFrustumCulling,
                 )).id();
                 terrain_state.chunks.insert(current_chunk_position, chunk_entity);
@@ -173,4 +197,32 @@ pub fn update_terrain(
             true
         }
     });
+
+    // Update instance data for all chunks
+    for (&chunk_pos, &entity) in terrain_state.chunks.iter() {
+        if let Ok((_, chunk)) = chunk_query.get(entity) {
+            let mut neighbors = [None; 6];
+            let neighbor_positions = [
+                IVec3::new(-1, 0, 0),
+                IVec3::new(1, 0, 0),
+                IVec3::new(0, -1, 0),
+                IVec3::new(0, 1, 0),
+                IVec3::new(0, 0, -1),
+                IVec3::new(0, 0, 1),
+            ];
+
+            for (i, offset) in neighbor_positions.iter().enumerate() {
+                if let Some(&neighbor_entity) = terrain_state.chunks.get(&(chunk_pos + *offset)) {
+                    if let Ok((_, neighbor_chunk)) = chunk_query.get(neighbor_entity) {
+                        neighbors[i] = Some(neighbor_chunk);
+                    }
+                }
+            }
+
+            if let Ok(mut instance_material_data) = instance_query.get_mut(entity) {
+                let new_instance_data = chunk.create_instance_data(&neighbors);
+                instance_material_data.0 = new_instance_data;
+            }
+        }
+    }
 }
