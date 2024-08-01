@@ -25,9 +25,13 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 
 mod cube_mesh;
-mod setup;
 mod terrain;
-use terrain::{TerrainState, update_terrain};
+use chunk::{update_terrain};
+use terrain::Terrain;
+
+mod setup;
+mod chunk;
+
 use bevy_flycam::prelude::*;
 
 fn main() {
@@ -38,7 +42,7 @@ fn main() {
             setup::SetupPlugin,
             CustomMaterialPlugin,
         ))
-        .init_resource::<TerrainState>()
+        .init_resource::<Terrain>()
         .add_systems(Startup, setup_terrain)
         .add_systems(Startup, setup_lighting)
         .add_systems(Update, update_terrain)
@@ -271,10 +275,10 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMeshInstanced {
 
 fn setup_terrain(
     mut commands: Commands,
-    mut terrain_state: ResMut<TerrainState>,
+    mut terrain_state: ResMut<Terrain>,
 ) {
-    // Initialize the terrain state
-    *terrain_state = TerrainState::default();
+    // Initialize the Terrain state
+    *terrain_state = Terrain::default();
 }
 
 fn setup_lighting(mut commands: Commands) {
