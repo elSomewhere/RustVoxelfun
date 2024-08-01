@@ -305,3 +305,4 @@ fn get_chunk_neighbors(chunks: &HashMap<IVec3, Entity>, chunk_pos: IVec3) -> [Op
 
     neighbor_positions.map(|offset| chunks.get(&(chunk_pos + offset)).copied())
 }
+
