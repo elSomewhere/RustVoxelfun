@@ -29,7 +29,7 @@ mod terrain;
 use chunk::{update_terrain};
 use terrain::Terrain;
 
-mod setup;
+
 mod chunk;
 
 use bevy_flycam::prelude::*;
@@ -39,7 +39,6 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(PlayerPlugin)
         .add_plugins((
-            setup::SetupPlugin,
             CustomMaterialPlugin,
         ))
         .init_resource::<Terrain>()
