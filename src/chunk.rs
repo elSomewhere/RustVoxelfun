@@ -4,12 +4,11 @@ use bevy::render::view::NoFrustumCulling;
 use noise::{NoiseFn, Perlin};
 
 use crate::cube_mesh::create_cube_mesh;
-use crate::{InstanceData, InstanceMaterialData};
 use bevy_flycam::FlyCam;
 use crate::terrain::TerrainState;
 
-pub const CHUNK_SIZE: i32 = 16;
-pub const RENDER_DISTANCE: i32 = 3;
+pub const CHUNK_SIZE: i32 = 4;
+pub const RENDER_DISTANCE: i32 = 4;
 pub const TERRAIN_HEIGHT: u32 = 64;
 pub const VOXEL_SIZE: f32 = 1.0;
 
@@ -25,43 +24,6 @@ pub struct Chunk {
 }
 
 
-#[derive(Component)]
-pub struct PreparedInstanceData(pub Vec<InstanceData>);
-
-pub fn prepare_chunk_updates(
-    terrain_state: Res<TerrainState>,
-    chunk_query: Query<&Chunk>,
-    mut commands: Commands,
-) {
-    for &chunk_pos in &terrain_state.chunks_to_update {
-        if let Some(&entity) = terrain_state.chunks.get(&chunk_pos) {
-            if let Ok(chunk) = chunk_query.get(entity) {
-                if chunk.dirty {
-                    let neighbor_entities = get_chunk_neighbors(&terrain_state.chunks, chunk_pos);
-                    let neighbors: [Option<&Chunk>; 6] = neighbor_entities.map(|entity| {
-                        entity.and_then(|e| chunk_query.get(e).ok())
-                    });
-
-                    let new_instance_data = chunk.generate_instance_data(&neighbors);
-                    commands.entity(entity).insert(PreparedInstanceData(new_instance_data));
-                }
-            }
-        }
-    }
-}
-
-pub fn apply_chunk_updates(
-    mut chunk_query: Query<(Entity, &mut Chunk, &mut InstanceMaterialData, Option<&PreparedInstanceData>)>,
-    mut commands: Commands,
-) {
-    for (entity, mut chunk, mut instance_material_data, prepared_data) in chunk_query.iter_mut() {
-        if let Some(prepared_data) = prepared_data {
-            instance_material_data.0 = prepared_data.0.clone();
-            chunk.dirty = false;
-            commands.entity(entity).remove::<PreparedInstanceData>();
-        }
-    }
-}
 
 
 impl Chunk {
@@ -250,99 +212,6 @@ impl Chunk {
     }
 }
 
-
-
-
-#[derive(Component)]
-pub struct ChunkNeedsUpdate;
-
-pub fn mark_chunks_for_update(
-    mut terrain_state: ResMut<TerrainState>,
-    query: Query<&Transform, With<FlyCam>>,
-) {
-    let player_position = query.single().translation;
-    let new_player_chunk = IVec3::new(
-        (player_position.x / (CHUNK_SIZE as f32 * VOXEL_SIZE)).floor() as i32,
-        0,
-        (player_position.z / (CHUNK_SIZE as f32 * VOXEL_SIZE)).floor() as i32,
-    );
-
-    // Only update if the player has moved to a new chunk
-    if new_player_chunk != terrain_state.player_chunk {
-        terrain_state.player_chunk = new_player_chunk;
-
-        // Clear the previous update and remove sets
-        terrain_state.chunks_to_update.clear();
-        terrain_state.chunks_to_remove.clear();
-
-        // Mark chunks for spawning or updating
-        for x in -RENDER_DISTANCE..=RENDER_DISTANCE {
-            for z in -RENDER_DISTANCE..=RENDER_DISTANCE {
-                let current_chunk_position = new_player_chunk + IVec3::new(x, 0, z);
-                terrain_state.chunks_to_update.insert(current_chunk_position);
-            }
-        }
-
-        // Collect positions to remove
-        let positions_to_remove: Vec<IVec3> = terrain_state.chunks.keys()
-            .filter(|&&pos| (pos - new_player_chunk).abs().max_element() > RENDER_DISTANCE)
-            .cloned()
-            .collect();
-
-        // Mark chunks for removal
-        for pos in positions_to_remove {
-            terrain_state.chunks_to_remove.insert(pos);
-        }
-    }
-}
-
-pub fn remove_marked_chunks(
-    mut commands: Commands,
-    mut terrain_state: ResMut<TerrainState>,
-) {
-    let chunks_to_remove = terrain_state.chunks_to_remove.clone();
-
-    for &chunk_pos in &chunks_to_remove {
-        if let Some(entity) = terrain_state.chunks.remove(&chunk_pos) {
-            commands.entity(entity).despawn();
-        }
-    }
-
-    terrain_state.chunks_to_remove.clear();
-}
-
-use bevy::ecs::system::ParamSet;
-
-pub fn update_marked_chunks(
-    mut commands: Commands,
-    mut terrain_state: ResMut<TerrainState>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    let chunks_to_update = terrain_state.chunks_to_update.clone();
-
-    for &chunk_pos in &chunks_to_update {
-        if !terrain_state.chunks.contains_key(&chunk_pos) {
-            // Spawn new chunk
-            let chunk = Chunk::new(
-                chunk_pos,
-                CHUNK_SIZE as u32,
-                TERRAIN_HEIGHT,
-                CHUNK_SIZE as u32,
-            );
-            let chunk_entity = commands.spawn((
-                chunk,
-                meshes.add(create_cube_mesh()),
-                SpatialBundle::INHERITED_IDENTITY,
-                InstanceMaterialData(Vec::new()),
-                NoFrustumCulling,
-            )).id();
-            terrain_state.chunks.insert(chunk_pos, chunk_entity);
-        }
-    }
-
-    terrain_state.chunks_to_update.clear();
-}
-
 fn get_chunk_neighbors(chunks: &HashMap<IVec3, Entity>, chunk_pos: IVec3) -> [Option<Entity>; 6] {
     let neighbor_positions = [
         IVec3::new(-1, 0, 0),
@@ -354,5 +223,67 @@ fn get_chunk_neighbors(chunks: &HashMap<IVec3, Entity>, chunk_pos: IVec3) -> [Op
     ];
 
     neighbor_positions.map(|offset| chunks.get(&(chunk_pos + offset)).copied())
+}
+
+pub fn remove_marked_chunks(
+    mut commands: Commands,
+    mut terrain_state: ResMut<TerrainState>,
+) {
+    let chunks_to_remove = terrain_state.chunks_to_remove.clone();
+
+    for &chunk_pos in &chunks_to_remove {
+        if let Some(entity) = terrain_state.chunks.remove(&chunk_pos) {
+            info!("Removing chunk at position: {:?}", chunk_pos);
+            commands.entity(entity).despawn();
+        }
+    }
+
+    terrain_state.chunks_to_remove.clear();
+}
+
+use bevy::ecs::system::ParamSet;
+use crate::rendering::InstanceMaterialData;
+use crate::types::InstanceData;
+
+#[derive(Component)]
+pub struct PreparedInstanceData(pub Vec<InstanceData>);
+
+pub fn prepare_chunk_updates(
+    terrain_state: Res<TerrainState>,
+    chunk_query: Query<&Chunk>,
+    mut commands: Commands,
+) {
+    for &chunk_pos in &terrain_state.chunks_to_update {
+        if let Some(&entity) = terrain_state.chunks.get(&chunk_pos) {
+            if let Ok(chunk) = chunk_query.get(entity) {
+                if chunk.dirty {
+                    let neighbor_entities = get_chunk_neighbors(&terrain_state.chunks, chunk_pos);
+                    let neighbors: [Option<&Chunk>; 6] = neighbor_entities.map(|entity| {
+                        entity.and_then(|e| chunk_query.get(e).ok())
+                    });
+
+                    let new_instance_data = chunk.generate_instance_data(&neighbors);
+                    commands.entity(entity).insert(PreparedInstanceData(new_instance_data));
+                }
+            }
+        }
+    }
+}
+
+pub fn apply_chunk_updates(
+    mut chunk_query: Query<(Entity, &mut Chunk, &mut InstanceMaterialData, Option<&PreparedInstanceData>)>,
+    mut commands: Commands,
+) {
+    for (entity, mut chunk, mut instance_material_data, prepared_data) in chunk_query.iter_mut() {
+        if let Some(prepared_data) = prepared_data {
+            info!("Applying update to chunk at position: {:?}", chunk.position);
+            instance_material_data.0 = prepared_data.0.clone();
+            chunk.dirty = false;
+            commands.entity(entity).remove::<PreparedInstanceData>();
+        } else {
+            // If there's no prepared data, mark the chunk as dirty to ensure it gets updated
+            chunk.dirty = true;
+        }
+    }
 }
 

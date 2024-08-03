@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::slice::Windows;
 use bevy::prelude::*;
-use bevy::input::mouse::MouseButtonInput;
 use bevy::window::PrimaryWindow;
 use bevy_flycam::FlyCam;
 use crate::chunk::{Chunk, VOXEL_SIZE, CHUNK_SIZE};
@@ -13,7 +12,7 @@ use bevy::ecs::system::ParamSet;
 
 pub fn handle_mouse_input(
     mouse_button_input: Res<ButtonInput<MouseButton>>,
-    window_query: Query<&Window>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<FlyCam>>,
     mut terrain_state: ResMut<TerrainState>,
     mut chunk_query: ParamSet<(Query<&Chunk>, Query<&mut Chunk>)>,
@@ -22,17 +21,18 @@ pub fn handle_mouse_input(
         let (camera, camera_transform) = camera_query.single();
         let window = window_query.single();
 
-        if let Some(cursor_position) = window.cursor_position() {
-            if let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position) {
-                let max_distance = 10.0;
-                let chunks = chunk_query.p0();
-                if let Some((chunk_pos, voxel_pos, _normal)) = raycast(ray.origin, ray.direction.into(), max_distance, &terrain_state, &chunks) {
-                    info!("Hit voxel at chunk {:?}, local pos {:?}", chunk_pos, voxel_pos);
-                    let mut chunks_mut = chunk_query.p1();
-                    remove_voxel(&mut terrain_state, &mut chunks_mut, chunk_pos, voxel_pos);
-                } else {
-                    info!("No voxel hit");
-                }
+        // Get the center of the screen
+        let center = Vec2::new(window.width() / 2.0, window.height() / 2.0);
+
+        if let Some(ray) = camera.viewport_to_world(camera_transform, center) {
+            let max_distance = 10.0;
+            let chunks = chunk_query.p0();
+            if let Some((chunk_pos, voxel_pos, _normal)) = raycast(ray.origin, ray.direction.into(), max_distance, &terrain_state, &chunks) {
+                info!("Hit voxel at chunk {:?}, local pos {:?}", chunk_pos, voxel_pos);
+                let mut chunks_mut = chunk_query.p1();
+                remove_voxel(&mut terrain_state, &mut chunks_mut, chunk_pos, voxel_pos);
+            } else {
+                info!("No voxel hit");
             }
         }
     }
