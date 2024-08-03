@@ -1,10 +1,10 @@
+use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::view::NoFrustumCulling;
 use noise::{NoiseFn, Perlin};
 
 use crate::cube_mesh::create_cube_mesh;
 use crate::{InstanceData, InstanceMaterialData};
-use std::collections::{HashMap, HashSet};
 use bevy_flycam::FlyCam;
 use crate::terrain::TerrainState;
 
