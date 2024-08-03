@@ -32,7 +32,7 @@ mod chunk;
 mod interaction;
 
 use bevy_flycam::prelude::*;
-use crate::chunk::{mark_chunks_for_update, update_marked_chunks};
+use crate::chunk::{apply_chunk_updates, mark_chunks_for_update, prepare_chunk_updates, remove_marked_chunks, update_marked_chunks};
 use crate::interaction::handle_mouse_input;
 use crate::terrain::TerrainState;
 
@@ -47,6 +47,9 @@ fn main() {
         .add_systems(Startup, setup_lighting)
         .add_systems(Update, mark_chunks_for_update)
         .add_systems(Update, update_marked_chunks)
+        .add_systems(Update, prepare_chunk_updates)
+        .add_systems(Update, apply_chunk_updates)
+        .add_systems(Update, remove_marked_chunks)
         .add_systems(Update, handle_mouse_input)
         .run();
 }
