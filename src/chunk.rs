@@ -5,6 +5,7 @@ use noise::{NoiseFn, Perlin};
 
 use crate::cube_mesh::create_cube_mesh;
 use bevy_flycam::FlyCam;
+use crate::resources::{InstanceMaterialData, VoxelResources};
 use crate::terrain::TerrainState;
 
 pub const CHUNK_SIZE: i32 = 4;
@@ -20,7 +21,6 @@ pub struct Chunk {
     depth: u32,
     voxels: Vec<bool>,
     pub dirty: bool,
-    cached_instance_data: Option<Vec<InstanceData>>,
 }
 
 
@@ -48,9 +48,70 @@ impl Chunk {
             height,
             depth,
             voxels,
-            dirty: true, // New chunk is initially dirty
-            cached_instance_data: None,
+            dirty: true,
         }
+    }
+
+    pub fn create_voxel_entities(&self, commands: &mut Commands, mesh: Handle<Mesh>, material: Handle<StandardMaterial>) -> Entity {
+        let mut instances = Vec::new();
+
+        for x in 0..self.width {
+            for y in 0..self.height {
+                for z in 0..self.depth {
+                    let index = (x + y * self.width + z * self.width * self.height) as usize;
+                    if self.voxels[index] {
+                        let world_x = self.position.x * CHUNK_SIZE as i32 + x as i32;
+                        let world_y = self.position.y * CHUNK_SIZE as i32 + y as i32;
+                        let world_z = self.position.z * CHUNK_SIZE as i32 + z as i32;
+
+                        instances.push(Transform::from_xyz(
+                            world_x as f32 * VOXEL_SIZE,
+                            world_y as f32 * VOXEL_SIZE,
+                            world_z as f32 * VOXEL_SIZE,
+                        ).with_scale(Vec3::splat(VOXEL_SIZE)));
+                    }
+                }
+            }
+        }
+
+        commands.spawn((
+            MaterialMeshBundle {
+                mesh,
+                material,
+                transform: Transform::from_xyz(
+                    self.position.x as f32 * CHUNK_SIZE as f32 * VOXEL_SIZE,
+                    self.position.y as f32 * CHUNK_SIZE as f32 * VOXEL_SIZE,
+                    self.position.z as f32 * CHUNK_SIZE as f32 * VOXEL_SIZE,
+                ),
+                ..default()
+            },
+            InstanceMaterialData(instances),
+        )).id()
+    }
+
+    pub fn update_voxel_entities(&self, commands: &mut Commands, entity: Entity) {
+        let mut instances = Vec::new();
+
+        for x in 0..self.width {
+            for y in 0..self.height {
+                for z in 0..self.depth {
+                    let index = (x + y * self.width + z * self.width * self.height) as usize;
+                    if self.voxels[index] {
+                        let world_x = self.position.x * CHUNK_SIZE as i32 + x as i32;
+                        let world_y = self.position.y * CHUNK_SIZE as i32 + y as i32;
+                        let world_z = self.position.z * CHUNK_SIZE as i32 + z as i32;
+
+                        instances.push(Transform::from_xyz(
+                            world_x as f32 * VOXEL_SIZE,
+                            world_y as f32 * VOXEL_SIZE,
+                            world_z as f32 * VOXEL_SIZE,
+                        ).with_scale(Vec3::splat(VOXEL_SIZE)));
+                    }
+                }
+            }
+        }
+
+        commands.entity(entity).insert(InstanceMaterialData(instances));
     }
 
     pub fn set_voxel(&mut self, x: i32, y: i32, z: i32, is_solid: bool) {
@@ -82,51 +143,7 @@ impl Chunk {
         normal
     }
 
-    pub fn create_instance_data(&mut self, neighbors: &[Option<&Chunk>; 6]) -> Vec<InstanceData> {
-        if self.dirty || self.cached_instance_data.is_none() {
-            let instances = self.generate_instance_data(neighbors);
-            self.cached_instance_data = Some(instances);
-            self.dirty = false;
-        }
-        self.cached_instance_data.as_ref().unwrap().clone() // Return a clone of the cached data
-    }
 
-
-    pub fn generate_instance_data(&self, neighbors: &[Option<&Chunk>; 6]) -> Vec<InstanceData> {
-        let mut instances = Vec::new();
-
-        for x in 0..self.width {
-            for y in 0..self.height {
-                for z in 0..self.depth {
-                    if self.voxels[(x + y * self.width + z * self.width * self.height) as usize] {
-                        let world_x = self.position.x * CHUNK_SIZE as i32 + x as i32;
-                        let world_y = self.position.y * CHUNK_SIZE as i32 + y as i32;
-                        let world_z = self.position.z * CHUNK_SIZE as i32 + z as i32;
-
-                        if self.is_voxel_visible(x as i32, y as i32, z as i32, neighbors) {
-                            let normal = self.calculate_normal(x, y, z, neighbors);
-                            let height_ratio = y as f32 / TERRAIN_HEIGHT as f32;
-                            let color = [
-                                0.2 + height_ratio * 0.3,
-                                0.4 + height_ratio * 0.2,
-                                0.1 + height_ratio * 0.1,
-                                1.0,
-                            ];
-                            instances.push(InstanceData {
-                                position: Vec3::new(world_x as f32 * VOXEL_SIZE, world_y as f32 * VOXEL_SIZE, world_z as f32 * VOXEL_SIZE),
-                                scale: VOXEL_SIZE,
-                                color,
-                                normal,
-                                _padding: 0.0,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        instances
-    }
 
     fn is_voxel_visible(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
         let directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)];
@@ -240,49 +257,42 @@ pub fn remove_marked_chunks(
 
     terrain_state.chunks_to_remove.clear();
 }
-
-use bevy::ecs::system::ParamSet;
-use crate::rendering::InstanceMaterialData;
-use crate::types::InstanceData;
-
-#[derive(Component)]
-pub struct PreparedInstanceData(pub Vec<InstanceData>);
-
 pub fn prepare_chunk_updates(
     terrain_state: Res<TerrainState>,
     chunk_query: Query<&Chunk>,
     mut commands: Commands,
+    voxel_resources: Res<VoxelResources>,
 ) {
     for &chunk_pos in &terrain_state.chunks_to_update {
         if let Some(&entity) = terrain_state.chunks.get(&chunk_pos) {
             if let Ok(chunk) = chunk_query.get(entity) {
                 if chunk.dirty {
-                    let neighbor_entities = get_chunk_neighbors(&terrain_state.chunks, chunk_pos);
-                    let neighbors: [Option<&Chunk>; 6] = neighbor_entities.map(|entity| {
-                        entity.and_then(|e| chunk_query.get(e).ok())
+                    commands.entity(entity).insert(PreparedChunkUpdate {
+                        mesh: voxel_resources.mesh.clone(),
+                        material: voxel_resources.material.clone(),
                     });
-
-                    let new_instance_data = chunk.generate_instance_data(&neighbors);
-                    commands.entity(entity).insert(PreparedInstanceData(new_instance_data));
                 }
             }
         }
     }
 }
 
+
+#[derive(Component)]
+pub struct PreparedChunkUpdate {
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+}
+
 pub fn apply_chunk_updates(
-    mut chunk_query: Query<(Entity, &mut Chunk, &mut InstanceMaterialData, Option<&PreparedInstanceData>)>,
     mut commands: Commands,
+    mut chunk_query: Query<(Entity, &mut Chunk, Option<&PreparedChunkUpdate>)>,
 ) {
-    for (entity, mut chunk, mut instance_material_data, prepared_data) in chunk_query.iter_mut() {
-        if let Some(prepared_data) = prepared_data {
+    for (entity, mut chunk, prepared_update) in chunk_query.iter_mut() {
+        if prepared_update.is_some() {
             info!("Applying update to chunk at position: {:?}", chunk.position);
-            instance_material_data.0 = prepared_data.0.clone();
-            chunk.dirty = false;
-            commands.entity(entity).remove::<PreparedInstanceData>();
-        } else {
-            // If there's no prepared data, mark the chunk as dirty to ensure it gets updated
-            chunk.dirty = true;
+            chunk.update_voxel_entities(&mut commands, entity);
+            commands.entity(entity).remove::<PreparedChunkUpdate>();
         }
     }
 }

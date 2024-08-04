@@ -1,10 +1,9 @@
 use bevy::prelude::*;
-use bevy::render::view::NoFrustumCulling;
 use bevy_flycam::FlyCam;
 use crate::terrain::TerrainState;
-use crate::chunk::{apply_chunk_updates, Chunk, CHUNK_SIZE, prepare_chunk_updates, remove_marked_chunks, RENDER_DISTANCE, TERRAIN_HEIGHT, VOXEL_SIZE};
+use crate::chunk::{Chunk, CHUNK_SIZE, RENDER_DISTANCE, TERRAIN_HEIGHT, VOXEL_SIZE};
 use crate::cube_mesh::create_cube_mesh;
-use crate::rendering::InstanceMaterialData;
+use crate::resources::VoxelResources;
 
 pub struct WorldPlugin;
 
@@ -12,13 +11,9 @@ impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(TerrainState::default())
             .add_systems(Update, mark_chunks_for_update)
-            .add_systems(Update, update_marked_chunks)
-            .add_systems(Update, prepare_chunk_updates)
-            .add_systems(Update, apply_chunk_updates)
-            .add_systems(Update, remove_marked_chunks);
+            .add_systems(Update, update_marked_chunks);
     }
 }
-
 
 pub fn mark_chunks_for_update(
     mut terrain_state: ResMut<TerrainState>,
@@ -84,17 +79,16 @@ pub fn mark_chunks_for_update(
     }
 }
 
-
 pub fn update_marked_chunks(
     mut commands: Commands,
     mut terrain_state: ResMut<TerrainState>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    voxel_resources: Res<VoxelResources>,
+    mut chunks: Query<&mut Chunk>,
 ) {
     let chunks_to_update = terrain_state.chunks_to_update.clone();
 
     for &chunk_pos in &chunks_to_update {
         if !terrain_state.chunks.contains_key(&chunk_pos) {
-            // Spawn new chunk
             info!("Creating new chunk at position: {:?}", chunk_pos);
             let chunk = Chunk::new(
                 chunk_pos,
@@ -102,16 +96,16 @@ pub fn update_marked_chunks(
                 TERRAIN_HEIGHT,
                 CHUNK_SIZE as u32,
             );
-            let chunk_entity = commands.spawn((
-                chunk,
-                meshes.add(create_cube_mesh()),
-                SpatialBundle::INHERITED_IDENTITY,
-                InstanceMaterialData(Vec::new()),
-                NoFrustumCulling,
-            )).id();
+            let chunk_entity = chunk.create_voxel_entities(&mut commands, voxel_resources.mesh.clone(), voxel_resources.material.clone());
+            commands.entity(chunk_entity).insert(chunk);
             terrain_state.chunks.insert(chunk_pos, chunk_entity);
-        }else {
-            info!("chunk at position is already there: {:?}", chunk_pos);
+        } else {
+            info!("Updating chunk at position: {:?}", chunk_pos);
+            if let Some(&chunk_entity) = terrain_state.chunks.get(&chunk_pos) {
+                if let Ok(mut chunk) = chunks.get_mut(chunk_entity) {
+                    chunk.update_voxel_entities(&mut commands, chunk_entity);
+                }
+            }
         }
     }
 
