@@ -1,53 +1,23 @@
-use bevy::{
-    core_pipeline::core_3d::Transparent3d,
-    ecs::{
-        query::QueryItem,
-        system::{lifetimeless::*, SystemParamItem},
-    },
-    pbr::{
-        MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshBindGroup, SetMeshViewBindGroup,
-    },
-    prelude::*,
-    render::{
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
-        mesh::{GpuBufferInfo, GpuMesh, MeshVertexBufferLayoutRef},
-        render_asset::RenderAssets,
-        render_phase::{
-            AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
-            RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
-        },
-        render_resource::*,
-        renderer::RenderDevice,
-        view::{ExtractedView, NoFrustumCulling},
-        Render, RenderApp, RenderSet,
-    },
-};
-use bytemuck::{Pod, Zeroable};
+use bevy::prelude::*;
+use bevy_flycam::prelude::*;
+use crate::chunk::{apply_chunk_updates, prepare_chunk_updates, remove_marked_chunks};
+use crate::interaction::handle_mouse_input;
+use crate::terrain::TerrainState;
+use crate::world::{mark_chunks_for_update, update_marked_chunks};
 
 mod cube_mesh;
 mod terrain;
 mod chunk;
 mod interaction;
-mod rendering;
 mod world;
 mod types;
-
-use bevy_flycam::prelude::*;
-use crate::chunk::{apply_chunk_updates, prepare_chunk_updates, remove_marked_chunks};
-use crate::interaction::handle_mouse_input;
-use crate::rendering::CustomMaterialPlugin;
-use crate::terrain::TerrainState;
-use crate::world::{mark_chunks_for_update, update_marked_chunks};
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(PlayerPlugin)
-        .add_plugins((
-            CustomMaterialPlugin,
-        ))
-        .insert_resource(TerrainState::default()) // Add this line
-        .add_systems(Startup, setup_lighting)
+        .insert_resource(TerrainState::default())
+        .add_systems(Startup, setup)
         .add_systems(Update, mark_chunks_for_update)
         .add_systems(Update, update_marked_chunks)
         .add_systems(Update, prepare_chunk_updates)
@@ -57,10 +27,11 @@ fn main() {
         .run();
 }
 
-
-
-fn setup_lighting(mut commands: Commands) {
-    // Add a directional light
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     commands.spawn(DirectionalLightBundle {
         directional_light: DirectionalLight {
             illuminance: 10000.0,
@@ -75,9 +46,20 @@ fn setup_lighting(mut commands: Commands) {
         ..default()
     });
 
-    // Add an ambient light
     commands.insert_resource(AmbientLight {
         color: Color::WHITE,
         brightness: 0.2,
     });
+
+    // Spawn the camera
+    commands.spawn((
+        FlyCam,
+    ));
+
+    // Add a default material
+    let material = materials.add(StandardMaterial::default());
+    commands.insert_resource(DefaultMaterial(material));
 }
+
+#[derive(Resource)]
+struct DefaultMaterial(Handle<StandardMaterial>);

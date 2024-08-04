@@ -1,24 +1,49 @@
 use bevy::prelude::*;
-use bevy::render::view::NoFrustumCulling;
+use bevy::render::mesh::PrimitiveTopology;
 use bevy_flycam::FlyCam;
 use crate::terrain::TerrainState;
-use crate::chunk::{apply_chunk_updates, Chunk, CHUNK_SIZE, prepare_chunk_updates, remove_marked_chunks, RENDER_DISTANCE, TERRAIN_HEIGHT, VOXEL_SIZE};
-use crate::cube_mesh::create_cube_mesh;
-use crate::rendering::InstanceMaterialData;
+use crate::chunk::{Chunk, CHUNK_SIZE, create_chunk_mesh, RENDER_DISTANCE, TERRAIN_HEIGHT, VOXEL_SIZE};
+use crate::DefaultMaterial;
 
-pub struct WorldPlugin;
+pub fn update_marked_chunks(
+    mut commands: Commands,
+    mut terrain_state: ResMut<TerrainState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    default_material: Res<DefaultMaterial>,
+) {
+    let chunks_to_update = terrain_state.chunks_to_update.clone();
 
-impl Plugin for WorldPlugin {
-    fn build(&self, app: &mut App) {
-        app.insert_resource(TerrainState::default())
-            .add_systems(Update, mark_chunks_for_update)
-            .add_systems(Update, update_marked_chunks)
-            .add_systems(Update, prepare_chunk_updates)
-            .add_systems(Update, apply_chunk_updates)
-            .add_systems(Update, remove_marked_chunks);
+    for &chunk_pos in &chunks_to_update {
+        if !terrain_state.chunks.contains_key(&chunk_pos) {
+            info!("Creating new chunk at position: {:?}", chunk_pos);
+            let chunk = Chunk::new(
+                chunk_pos,
+                CHUNK_SIZE as u32,
+                TERRAIN_HEIGHT,
+                CHUNK_SIZE as u32,
+            );
+            let mesh = create_chunk_mesh(&chunk);
+            let chunk_entity = commands.spawn((
+                chunk,
+                PbrBundle {
+                    mesh: meshes.add(mesh),
+                    material: default_material.0.clone(),
+                    transform: Transform::from_translation(Vec3::new(
+                        chunk_pos.x as f32 * CHUNK_SIZE as f32 * VOXEL_SIZE,
+                        0.0,
+                        chunk_pos.z as f32 * CHUNK_SIZE as f32 * VOXEL_SIZE,
+                    )),
+                    ..default()
+                },
+            )).id();
+            terrain_state.chunks.insert(chunk_pos, chunk_entity);
+        } else {
+            info!("Chunk at position is already there: {:?}", chunk_pos);
+        }
     }
-}
 
+    terrain_state.chunks_to_update.clear();
+}
 
 pub fn mark_chunks_for_update(
     mut terrain_state: ResMut<TerrainState>,
@@ -82,38 +107,4 @@ pub fn mark_chunks_for_update(
         info!("Chunks to update: {:?}", terrain_state.chunks_to_update);
         info!("Chunks to remove: {:?}", terrain_state.chunks_to_remove);
     }
-}
-
-
-pub fn update_marked_chunks(
-    mut commands: Commands,
-    mut terrain_state: ResMut<TerrainState>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    let chunks_to_update = terrain_state.chunks_to_update.clone();
-
-    for &chunk_pos in &chunks_to_update {
-        if !terrain_state.chunks.contains_key(&chunk_pos) {
-            // Spawn new chunk
-            info!("Creating new chunk at position: {:?}", chunk_pos);
-            let chunk = Chunk::new(
-                chunk_pos,
-                CHUNK_SIZE as u32,
-                TERRAIN_HEIGHT,
-                CHUNK_SIZE as u32,
-            );
-            let chunk_entity = commands.spawn((
-                chunk,
-                meshes.add(create_cube_mesh()),
-                SpatialBundle::INHERITED_IDENTITY,
-                InstanceMaterialData(Vec::new()),
-                NoFrustumCulling,
-            )).id();
-            terrain_state.chunks.insert(chunk_pos, chunk_entity);
-        }else {
-            info!("chunk at position is already there: {:?}", chunk_pos);
-        }
-    }
-
-    terrain_state.chunks_to_update.clear();
 }

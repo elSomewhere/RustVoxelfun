@@ -1,10 +1,6 @@
-use std::collections::HashMap;
 use bevy::prelude::*;
-use bevy::render::view::NoFrustumCulling;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use noise::{NoiseFn, Perlin};
-
-use crate::cube_mesh::create_cube_mesh;
-use bevy_flycam::FlyCam;
 use crate::terrain::TerrainState;
 
 pub const CHUNK_SIZE: i32 = 4;
@@ -20,11 +16,7 @@ pub struct Chunk {
     depth: u32,
     voxels: Vec<bool>,
     pub dirty: bool,
-    cached_instance_data: Option<Vec<InstanceData>>,
 }
-
-
-
 
 impl Chunk {
     pub fn new(position: IVec3, width: u32, height: u32, depth: u32) -> Self {
@@ -49,7 +41,6 @@ impl Chunk {
             depth,
             voxels,
             dirty: true, // New chunk is initially dirty
-            cached_instance_data: None,
         }
     }
 
@@ -67,163 +58,127 @@ impl Chunk {
         self.set_voxel(x, y, z, false);
     }
 
-    fn calculate_normal(&self, x: u32, y: u32, z: u32, neighbors: &[Option<&Chunk>; 6]) -> [f32; 3] {
-        let mut normal = [0.0, 0.0, 0.0];
-        let directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)];
+    pub fn is_voxel_solid(&self, x: i32, y: i32, z: i32) -> bool {
+        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
+            self.voxels[(x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize]
+        } else {
+            false
+        }
+    }
+}
 
-        for (i, (dx, dy, dz)) in directions.iter().enumerate() {
-            let (nx, ny, nz) = (x as i32 + dx, y as i32 + dy, z as i32 + dz);
 
-            if !self.is_voxel_solid(nx, ny, nz, neighbors) {
-                normal[i / 2] += *dx as f32 + *dy as f32 + *dz as f32;
+
+pub fn prepare_chunk_updates(
+    terrain_state: Res<TerrainState>,
+    mut chunk_query: Query<&mut Chunk>,
+) {
+    for &chunk_pos in &terrain_state.chunks_to_update {
+        if let Some(&entity) = terrain_state.chunks.get(&chunk_pos) {
+            if let Ok(mut chunk) = chunk_query.get_mut(entity) {
+                chunk.dirty = true;
             }
         }
-
-        normal
     }
+}
 
-    pub fn create_instance_data(&mut self, neighbors: &[Option<&Chunk>; 6]) -> Vec<InstanceData> {
-        if self.dirty || self.cached_instance_data.is_none() {
-            let instances = self.generate_instance_data(neighbors);
-            self.cached_instance_data = Some(instances);
-            self.dirty = false;
+pub fn apply_chunk_updates(
+    mut chunk_query: Query<(&mut Chunk, &mut Handle<Mesh>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (mut chunk, mut mesh_handle) in chunk_query.iter_mut() {
+        if chunk.dirty {
+            info!("Applying update to chunk at position: {:?}", chunk.position);
+            let new_mesh = create_chunk_mesh(&chunk);
+            *mesh_handle = meshes.add(new_mesh);
+            chunk.dirty = false;
         }
-        self.cached_instance_data.as_ref().unwrap().clone() // Return a clone of the cached data
     }
+}
 
+pub fn create_chunk_mesh(chunk: &Chunk) -> Mesh {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
 
-    pub fn generate_instance_data(&self, neighbors: &[Option<&Chunk>; 6]) -> Vec<InstanceData> {
-        let mut instances = Vec::new();
-
-        for x in 0..self.width {
-            for y in 0..self.height {
-                for z in 0..self.depth {
-                    if self.voxels[(x + y * self.width + z * self.width * self.height) as usize] {
-                        let world_x = self.position.x * CHUNK_SIZE as i32 + x as i32;
-                        let world_y = self.position.y * CHUNK_SIZE as i32 + y as i32;
-                        let world_z = self.position.z * CHUNK_SIZE as i32 + z as i32;
-
-                        if self.is_voxel_visible(x as i32, y as i32, z as i32, neighbors) {
-                            let normal = self.calculate_normal(x, y, z, neighbors);
-                            let height_ratio = y as f32 / TERRAIN_HEIGHT as f32;
-                            let color = [
-                                0.2 + height_ratio * 0.3,
-                                0.4 + height_ratio * 0.2,
-                                0.1 + height_ratio * 0.1,
-                                1.0,
-                            ];
-                            instances.push(InstanceData {
-                                position: Vec3::new(world_x as f32 * VOXEL_SIZE, world_y as f32 * VOXEL_SIZE, world_z as f32 * VOXEL_SIZE),
-                                scale: VOXEL_SIZE,
-                                color,
-                                normal,
-                                _padding: 0.0,
-                            });
-                        }
-                    }
+    for x in 0..chunk.width {
+        for y in 0..chunk.height {
+            for z in 0..chunk.depth {
+                if chunk.is_voxel_solid(x as i32, y as i32, z as i32) {
+                    add_voxel_to_mesh(x as f32, y as f32, z as f32, &mut positions, &mut normals, &mut uvs, &mut indices);
                 }
             }
         }
-
-        instances
     }
 
-    fn is_voxel_visible(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
-        let directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)];
-
-        for (dx, dy, dz) in directions.iter() {
-            let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-            if !self.is_voxel_solid(nx, ny, nz, neighbors) {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    pub(crate) fn is_voxel_solid(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
-        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
-            return self.voxels[(x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize];
-        }
-
-        let (chunk_x, chunk_y, chunk_z) = (
-            if x < 0 { -1 } else if x >= CHUNK_SIZE { 1 } else { 0 },
-            if y < 0 { -1 } else if y >= self.height as i32 { 1 } else { 0 },
-            if z < 0 { -1 } else if z >= CHUNK_SIZE { 1 } else { 0 },
-        );
-
-        let neighbor_index = match (chunk_x, chunk_y, chunk_z) {
-            (-1, 0, 0) => 0,
-            (1, 0, 0) => 1,
-            (0, -1, 0) => 2,
-            (0, 1, 0) => 3,
-            (0, 0, -1) => 4,
-            (0, 0, 1) => 5,
-            _ => return false, // Corner or edge case, treat as air
-        };
-
-        if let Some(neighbor) = &neighbors[neighbor_index] {
-            let (nx, ny, nz) = (
-                (x + CHUNK_SIZE) % CHUNK_SIZE,
-                y.rem_euclid(self.height as i32),
-                (z + CHUNK_SIZE) % CHUNK_SIZE,
-            );
-            neighbor.voxels[(nx + ny * CHUNK_SIZE + nz * CHUNK_SIZE * neighbor.height as i32) as usize]
-        } else {
-            false // If there's no neighbor chunk, treat it as air
-        }
-    }
-
-
-    pub(crate) fn is_voxel_solid_raycast(&self, x: i32, y: i32, z: i32, neighbors: &[Option<&Chunk>; 6]) -> bool {
-        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
-            let index = (x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize;
-            let is_solid = self.voxels[index];
-            info!("Checking voxel at local position ({}, {}, {}): {}", x, y, z, is_solid);
-            return is_solid;
-        }
-
-        let (chunk_x, chunk_y, chunk_z) = (
-            if x < 0 { -1 } else if x >= CHUNK_SIZE { 1 } else { 0 },
-            if y < 0 { -1 } else if y >= self.height as i32 { 1 } else { 0 },
-            if z < 0 { -1 } else if z >= CHUNK_SIZE { 1 } else { 0 },
-        );
-
-        let neighbor_index = match (chunk_x, chunk_y, chunk_z) {
-            (-1, 0, 0) => 0,
-            (1, 0, 0) => 1,
-            (0, -1, 0) => 2,
-            (0, 1, 0) => 3,
-            (0, 0, -1) => 4,
-            (0, 0, 1) => 5,
-            _ => return false, // Corner or edge case, treat as air
-        };
-
-        if let Some(neighbor) = &neighbors[neighbor_index] {
-            let (nx, ny, nz) = (
-                (x + CHUNK_SIZE) % CHUNK_SIZE,
-                y.rem_euclid(self.height as i32),
-                (z + CHUNK_SIZE) % CHUNK_SIZE,
-            );
-            neighbor.voxels[(nx + ny * CHUNK_SIZE + nz * CHUNK_SIZE * neighbor.height as i32) as usize]
-        } else {
-            false // If there's no neighbor chunk, treat it as air
-        }
-    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, Default::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
 }
 
-fn get_chunk_neighbors(chunks: &HashMap<IVec3, Entity>, chunk_pos: IVec3) -> [Option<Entity>; 6] {
-    let neighbor_positions = [
-        IVec3::new(-1, 0, 0),
-        IVec3::new(1, 0, 0),
-        IVec3::new(0, -1, 0),
-        IVec3::new(0, 1, 0),
-        IVec3::new(0, 0, -1),
-        IVec3::new(0, 0, 1),
+fn add_voxel_to_mesh(x: f32, y: f32, z: f32, positions: &mut Vec<[f32; 3]>, normals: &mut Vec<[f32; 3]>, uvs: &mut Vec<[f32; 2]>, indices: &mut Vec<u32>) {
+    let voxel_positions = [
+        // Front face
+        [x, y, z], [x + 1.0, y, z], [x + 1.0, y + 1.0, z], [x, y + 1.0, z],
+        // Back face
+        [x, y, z + 1.0], [x + 1.0, y, z + 1.0], [x + 1.0, y + 1.0, z + 1.0], [x, y + 1.0, z + 1.0],
+        // Right face
+        [x + 1.0, y, z], [x + 1.0, y, z + 1.0], [x + 1.0, y + 1.0, z + 1.0], [x + 1.0, y + 1.0, z],
+        // Left face
+        [x, y, z], [x, y, z + 1.0], [x, y + 1.0, z + 1.0], [x, y + 1.0, z],
+        // Top face
+        [x, y + 1.0, z], [x + 1.0, y + 1.0, z], [x + 1.0, y + 1.0, z + 1.0], [x, y + 1.0, z + 1.0],
+        // Bottom face
+        [x, y, z], [x + 1.0, y, z], [x + 1.0, y, z + 1.0], [x, y, z + 1.0],
     ];
 
-    neighbor_positions.map(|offset| chunks.get(&(chunk_pos + offset)).copied())
+    let face_normals = [
+        [0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 0.0],
+    ];
+
+    let face_uvs = [
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
+    ];
+
+    for face in 0..6 {
+        let offset = positions.len() as u32;
+        positions.extend_from_slice(&voxel_positions[face * 4..(face + 1) * 4]);
+        normals.extend_from_slice(&[face_normals[face]; 4]);
+        uvs.extend_from_slice(&face_uvs);
+        indices.extend_from_slice(&[offset, offset + 1, offset + 2, offset + 2, offset + 3, offset]);
+    }
 }
+
+
+fn create_voxel_mesh(x: f32, y: f32, z: f32) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    // Define vertices, normals, and indices for a unit cube
+    // Translate the vertices by (x, y, z)
+    // Return the vertices, normals, and indices
+    // This is a simplified example and should be optimized for real use
+    let positions = vec![
+        [x, y, z], [x + 1.0, y, z], [x + 1.0, y + 1.0, z], [x, y + 1.0, z],
+        [x, y, z + 1.0], [x + 1.0, y, z + 1.0], [x + 1.0, y + 1.0, z + 1.0], [x, y + 1.0, z + 1.0],
+    ];
+    let normals = vec![
+        [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0], [0.0, 0.0, -1.0], [0.0, 0.0, 1.0],
+    ];
+    let indices = vec![
+        0, 1, 2, 2, 3, 0, // Front face
+        1, 5, 6, 6, 2, 1, // Right face
+        5, 4, 7, 7, 6, 5, // Back face
+        4, 0, 3, 3, 7, 4, // Left face
+        3, 2, 6, 6, 7, 3, // Top face
+        4, 5, 1, 1, 0, 4, // Bottom face
+    ];
+    (positions, normals, indices)
+}
+
 
 pub fn remove_marked_chunks(
     mut commands: Commands,
@@ -240,50 +195,3 @@ pub fn remove_marked_chunks(
 
     terrain_state.chunks_to_remove.clear();
 }
-
-use bevy::ecs::system::ParamSet;
-use crate::rendering::InstanceMaterialData;
-use crate::types::InstanceData;
-
-#[derive(Component)]
-pub struct PreparedInstanceData(pub Vec<InstanceData>);
-
-pub fn prepare_chunk_updates(
-    terrain_state: Res<TerrainState>,
-    chunk_query: Query<&Chunk>,
-    mut commands: Commands,
-) {
-    for &chunk_pos in &terrain_state.chunks_to_update {
-        if let Some(&entity) = terrain_state.chunks.get(&chunk_pos) {
-            if let Ok(chunk) = chunk_query.get(entity) {
-                if chunk.dirty {
-                    let neighbor_entities = get_chunk_neighbors(&terrain_state.chunks, chunk_pos);
-                    let neighbors: [Option<&Chunk>; 6] = neighbor_entities.map(|entity| {
-                        entity.and_then(|e| chunk_query.get(e).ok())
-                    });
-
-                    let new_instance_data = chunk.generate_instance_data(&neighbors);
-                    commands.entity(entity).insert(PreparedInstanceData(new_instance_data));
-                }
-            }
-        }
-    }
-}
-
-pub fn apply_chunk_updates(
-    mut chunk_query: Query<(Entity, &mut Chunk, &mut InstanceMaterialData, Option<&PreparedInstanceData>)>,
-    mut commands: Commands,
-) {
-    for (entity, mut chunk, mut instance_material_data, prepared_data) in chunk_query.iter_mut() {
-        if let Some(prepared_data) = prepared_data {
-            info!("Applying update to chunk at position: {:?}", chunk.position);
-            instance_material_data.0 = prepared_data.0.clone();
-            chunk.dirty = false;
-            commands.entity(entity).remove::<PreparedInstanceData>();
-        } else {
-            // If there's no prepared data, mark the chunk as dirty to ensure it gets updated
-            chunk.dirty = true;
-        }
-    }
-}
-
