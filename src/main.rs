@@ -1,25 +1,11 @@
 use bevy::{
-    core_pipeline::core_3d::Transparent3d,
-    ecs::{
-        query::QueryItem,
-        system::{lifetimeless::*, SystemParamItem},
-    },
-    pbr::{
-        MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshBindGroup, SetMeshViewBindGroup,
-    },
     prelude::*,
     render::{
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
-        mesh::{GpuBufferInfo, GpuMesh, MeshVertexBufferLayoutRef},
-        render_asset::RenderAssets,
+        extract_component::{ExtractComponent},
         render_phase::{
-            AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
-            RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
+            AddRenderCommand, PhaseItem, RenderCommand
         },
-        render_resource::*,
-        renderer::RenderDevice,
-        view::{ExtractedView, NoFrustumCulling},
-        Render, RenderApp, RenderSet,
+        render_resource::*
     },
 };
 use bytemuck::{Pod, Zeroable};
