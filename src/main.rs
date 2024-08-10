@@ -1,51 +1,30 @@
-use bevy::{
-    prelude::*,
-    render::{
-        extract_component::{ExtractComponent},
-        render_phase::{
-            AddRenderCommand, PhaseItem, RenderCommand
-        },
-        render_resource::*
-    },
-};
-use bytemuck::{Pod, Zeroable};
+use bevy::prelude::*;
+use bevy::render::render_resource::*;
+use bevy::render::view::NoFrustumCulling;
+use bevy_flycam::prelude::*;
 
 mod cube_mesh;
-mod terrain;
-mod chunk;
-mod interaction;
 mod rendering;
-mod world;
 mod types;
 
-use bevy_flycam::prelude::*;
-use crate::chunk::{apply_chunk_updates, prepare_chunk_updates, remove_marked_chunks};
-use crate::interaction::handle_mouse_input;
-use crate::rendering::CustomMaterialPlugin;
-use crate::terrain::TerrainState;
-use crate::world::{mark_chunks_for_update, update_marked_chunks};
+use crate::cube_mesh::create_cube_mesh;
+use crate::rendering::{CustomMaterialPlugin, InstanceMaterialData};
+use crate::types::InstanceData;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(PlayerPlugin)
-        .add_plugins((
-            CustomMaterialPlugin,
-        ))
-        .insert_resource(TerrainState::default()) // Add this line
-        .add_systems(Startup, setup_lighting)
-        .add_systems(Update, mark_chunks_for_update)
-        .add_systems(Update, update_marked_chunks)
-        .add_systems(Update, prepare_chunk_updates)
-        .add_systems(Update, apply_chunk_updates)
-        .add_systems(Update, remove_marked_chunks)
-        .add_systems(Update, handle_mouse_input)
+        .add_plugins(CustomMaterialPlugin)
+        .add_systems(Startup, setup)
         .run();
 }
 
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
 
-
-fn setup_lighting(mut commands: Commands) {
     // Add a directional light
     commands.spawn(DirectionalLightBundle {
         directional_light: DirectionalLight {
@@ -61,9 +40,36 @@ fn setup_lighting(mut commands: Commands) {
         ..default()
     });
 
-    // Add an ambient light
-    commands.insert_resource(AmbientLight {
-        color: Color::WHITE,
-        brightness: 0.2,
-    });
+    // Create instance data for 3 voxels
+    let instances = vec![
+        InstanceData {
+            position: Vec3::new(0.0, 0.0, 0.0),
+            scale: 1.0,
+            color: [1.0, 0.0, 0.0, 1.0], // Red
+            normal: [0.0, 1.0, 0.0],
+            _padding: 0.0,
+        },
+        InstanceData {
+            position: Vec3::new(2.0, 0.0, 0.0),
+            scale: 1.0,
+            color: [0.0, 1.0, 0.0, 1.0], // Green
+            normal: [0.0, 1.0, 0.0],
+            _padding: 0.0,
+        },
+        InstanceData {
+            position: Vec3::new(1.0, 1.0, 0.0),
+            scale: 1.0,
+            color: [0.0, 0.0, 1.0, 1.0], // Blue
+            normal: [0.0, 1.0, 0.0],
+            _padding: 0.0,
+        },
+    ];
+
+    // Spawn the instanced voxels
+    commands.spawn((
+        meshes.add(create_cube_mesh()),
+        InstanceMaterialData(instances),
+        SpatialBundle::INHERITED_IDENTITY,
+        NoFrustumCulling,
+    ));
 }
