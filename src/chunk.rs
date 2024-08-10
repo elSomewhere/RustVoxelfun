@@ -14,11 +14,11 @@ pub const VOXEL_SIZE: f32 = 1.0;
 
 #[derive(Component)]
 pub struct Chunk {
-    pub position: IVec3,
+    pub position: IVec3, // world position
     width: u32,
     height: u32,
     depth: u32,
-    voxels: Vec<bool>,
+    voxels: Vec<bool>, // visibility
     pub dirty: bool,
     cached_instance_data: Option<Vec<InstanceData>>,
 }
@@ -53,6 +53,14 @@ impl Chunk {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.position = IVec3::ZERO;
+        self.voxels.fill(false);
+        self.dirty = true;
+        self.cached_instance_data = None;
+    }
+
+
     pub fn set_voxel(&mut self, x: i32, y: i32, z: i32, is_solid: bool) {
         if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 && z >= 0 && z < self.depth as i32 {
             let index = (x + y * self.width as i32 + z * self.width as i32 * self.height as i32) as usize;
@@ -65,6 +73,10 @@ impl Chunk {
 
     pub fn remove_voxel(&mut self, x: i32, y: i32, z: i32) {
         self.set_voxel(x, y, z, false);
+    }
+
+    pub fn add_voxel(&mut self, x: i32, y: i32, z: i32) {
+        self.set_voxel(x, y, z, true);
     }
 
     fn calculate_normal(&self, x: u32, y: u32, z: u32, neighbors: &[Option<&Chunk>; 6]) -> [f32; 3] {
